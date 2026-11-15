@@ -4,7 +4,7 @@
 
 * any **t** shares reconstruct it,
 * any **t − 1** shares reveal **nothing**: perfect, information-theoretic secrecy that holds against quantum or unbounded adversaries,
-* the reconstructor can **validate** the result. A single field-element MAC key shared alongside the secret catches any tampering by up to t − 1 liars with probability ≥ 1 − 2⁻⁶⁰. With redundant shares, detection is certain and the bad share is named,
+* the reconstructor can **validate** the result. A single field-element MAC key shared alongside the secret catches any tampering by up to t − 1 liars with probability ≥ 1 − 2⁻⁶⁰. With redundant shares, detection is certain,
 * shares can be **proactively refreshed**, so shares stolen in an earlier epoch become useless.
 
 The maths is number theory and linear algebra only: the Mersenne prime field **GF(2⁶¹ − 1)** and an **extended Cauchy matrix**, whose every square minor is non-zero. Reconstruction and privacy both follow from that one determinant identity. No existing cipher touches the plaintext.
@@ -37,7 +37,7 @@ kavach ctcheck                      # dudect-style timing-leak test
 [2] combine {4,2,1} + redundant #3     -> consistent & recovered: true
 [3] attacker holds only 2 shares         -> not enough shares: have 2, need 3
 [4] malicious holder flips share #2 bits -> MAC validation FAILED: reconstructed secret is not authentic
-[5] same attack, 4 shares supplied       -> share #4 is inconsistent with the others (tampered or corrupted)
+[5] same attack, 4 shares supplied       -> share set is INCONSISTENT (mismatch detected at share #4): a share was tampered or corrupted
 [6] proactive refresh, then combine      -> still recovers key: true
 [7] share stolen BEFORE refresh + 2 new  -> shares come from different dealings
 ```
