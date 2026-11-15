@@ -9,7 +9,7 @@
 
 The maths is number theory and linear algebra only: the Mersenne prime field **GF(2⁶¹ − 1)** and an **extended Cauchy matrix**, whose every square minor is non-zero. Reconstruction and privacy both follow from that one determinant identity. No existing cipher touches the plaintext.
 
-📄 **Full write-up with proofs:** [`paper/kavach.tex`](paper/kavach.tex). Build the PDF with `cd paper && pdflatex kavach.tex`. The same write-up is in the Devpost project description.
+📄 **Full write-up with proofs:** [`paper/kavach.pdf`](paper/kavach.pdf) (LaTeX source: [`paper/kavach.tex`](paper/kavach.tex))
 
 ## Build & run
 
