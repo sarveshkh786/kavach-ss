@@ -263,7 +263,7 @@ guarantee.
 Window & Mitigation in Kavach-SS\\
 \midrule
 Key at rest on one machine & Split into $n$ shares; $t-1$ of them are information-theoretically useless (Thm.~\ref{thm:privacy}).\\
-Malicious or corrupted holder & IT-MAC catches any change to $K$ w.p.\ $\ge 1-2^{-60}$ (Thm.~\ref{thm:mac}); with redundancy, detection is certain and the bad share is named.\\
+Malicious or corrupted holder & IT-MAC catches any change to $K$ w.p.\ $\ge 1-2^{-60}$ (Thm.~\ref{thm:mac}); with redundancy (all $n$ shares), detection is certain.\\
 Slow compromise over months & Proactive refresh with epoch IDs makes stolen old shares worthless.\\
 Timing side channel & Branch-free field arithmetic, fixed-schedule \texttt{pow}, all-limb constant-time tag check.\\
 Memory remanence / swap & Every secret buffer (shares, $\vect v$, $\alpha$, limbs, output) is overwritten with \texttt{write\_volatile} plus a compiler fence on drop; output files are created with mode 0600.\\
