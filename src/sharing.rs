@@ -46,7 +46,7 @@ impl fmt::Display for Error {
             Error::DuplicateIndex(i) => write!(f, "duplicate share index {i}"),
             Error::Inconsistent(i) => write!(
                 f,
-                "share #{i} is inconsistent with the others (tampered or corrupted)"
+                "share set is INCONSISTENT (mismatch detected at share #{i}): a share was tampered or corrupted"
             ),
             Error::MacFailure => write!(
                 f,
