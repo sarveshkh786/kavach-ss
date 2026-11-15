@@ -1,0 +1,322 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=2.2cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{booktabs,tabularx,enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{algorithm,algpseudocode}
+\usepackage{xcolor}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}{Lemma}
+\newtheorem{definition}{Definition}
+\theoremstyle{remark}
+\newtheorem*{remark}{Remark}
+
+\newcommand{\F}{\mathbb{F}_p}
+\newcommand{\vect}[1]{\mathbf{#1}}
+\DeclareMathOperator{\rank}{rank}
+
+\title{\textbf{Kavach-SS}\\[2pt]
+\large Validated Threshold Sharing of Master Keys via Cauchy--MDS Codes\\
+and an Information-Theoretic MAC over $\mathrm{GF}(2^{61}-1)$}
+\author{Mathematics for Systems Security --- Cryptographer Track}
+\date{November 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+Kavach-SS (\emph{kavach}: Hindi for ``armour'') protects a master key $K$ by
+splitting it into $n$ shares so that any $t$ shares reconstruct $K$, any $t-1$
+shares reveal \emph{nothing} about it (perfect, information-theoretic secrecy),
+and the person reconstructing can \emph{validate} that the result is authentic
+even if up to $t-1$ shareholders lie. The construction uses only number theory
+and linear algebra: arithmetic in the Mersenne prime field
+$\F$, $p = 2^{61}-1$; an extended $(n+1)\times t$ Cauchy generator matrix whose
+every square minor is non-zero; and a single field-element MAC key shared
+alongside the secret. Forgery probability is at most $1/(p-1) < 2^{-60}$ per limb
+with no computational assumption. Shares can be proactively refreshed to close
+long-term exposure windows. The reference implementation is zero-dependency Rust
+whose secret-handling arithmetic compiles to branch-free machine code.
+No pre-existing cipher (AES, ChaCha, RSA, \ldots) is used anywhere.
+\end{abstract}
+
+\section{Problem and threat model}
+
+A master key that exists in one place has one point of failure. We want a scheme
+that keeps the key safe while it is \emph{at rest} (split across $n$ holders),
+\emph{validates} reconstruction, and minimises side-channel leakage while the
+algorithm runs.
+
+\paragraph{Adversary.} The adversary may (i) read up to $t-1$ shares
+(\emph{passive}); (ii) replace up to $t-1$ of the shares submitted for
+reconstruction with values of its choice, adaptively, after seeing the shares it
+corrupted (\emph{active}); (iii) corrupt different holders over time
+(\emph{mobile}); and (iv) measure the running time of every operation
+(\emph{timing side channel}). It is computationally unbounded. The dealer and
+combiner are honest at the instants they run (\S\ref{sec:limits}).
+
+\section{Mathematical preliminaries}
+
+\paragraph{The field.} Let $p = 2^{61}-1$, a Mersenne prime. Since
+$2^{61}\equiv 1 \pmod p$, any $x<2^{122}$ written as $x = x_{\mathrm{hi}}2^{61}+x_{\mathrm{lo}}$ satisfies
+\begin{equation}\label{eq:reduce}
+x \equiv x_{\mathrm{hi}} + x_{\mathrm{lo}} \pmod p ,
+\end{equation}
+so reduction is a mask, a shift, an add, and a conditional subtraction of $p$,
+which we perform without branching (\S\ref{sec:sidechannel}).
+Inverses use Fermat's little theorem, $a^{-1}=a^{p-2}$.
+
+\begin{definition}[Cauchy matrix]
+For $x_0,\dots,x_{m-1}$ and $y_0,\dots,y_{k-1}$ in $\F$ with $x_i\neq y_j$ for all $i,j$,
+the Cauchy matrix is $C_{ij} = (x_i-y_j)^{-1}$.
+\end{definition}
+
+\begin{lemma}[Cauchy determinant]\label{lem:cauchy}
+For a square Cauchy matrix of order $k$,
+\[
+\det C \;=\; \frac{\prod_{0\le i<j<k}(x_j-x_i)(y_i-y_j)}{\prod_{i,j}(x_i-y_j)} .
+\]
+Hence if the $x_i$ are pairwise distinct and the $y_j$ are pairwise distinct,
+\emph{every} square submatrix of a (rectangular) Cauchy matrix is non-singular,
+because every submatrix is itself a Cauchy matrix on a subset of the nodes.
+\end{lemma}
+\begin{proof}[Proof sketch]
+Both sides are rational functions of the nodes. Subtracting the last row from the
+others and factoring out $(x_k - x_i)/(x_i-y_j)(x_k-y_j)$ terms, then repeating
+for columns, reduces to a Cauchy matrix of order $k-1$; induction gives the
+formula (classical, Cauchy 1841). The numerator vanishes only if two $x$'s or
+two $y$'s coincide.
+\end{proof}
+
+\section{The construction}
+
+\paragraph{Public parameters.} Threshold $1\le t\le n\le 255$. Nodes
+$x_i = i$ for $i=0,\dots,n$ and $y_j = p-1-j$ for $j=0,\dots,t-1$. These sets are
+disjoint because $n < p-t$. The \emph{extended generator} is the $(n+1)\times t$
+Cauchy matrix $C$; write $\vect c_i$ for its row $i$. Row $0$ is the
+\emph{secret row}; rows $1,\dots,n$ are the \emph{share rows}.
+
+\paragraph{Encoding.} The key $K$ ($\ell$ bytes) is cut into $L=\lceil \ell/7\rceil$
+limbs $s_1,\dots,s_L$, each a 56-bit integer and so a canonical element of $\F$.
+
+\begin{algorithm}[h]
+\caption{\textsc{Deal}$(K, t, n)$}\label{alg:deal}
+\begin{algorithmic}[1]
+\State $\alpha \xleftarrow{\$} \F^{\times}$ \Comment{MAC key}
+\State $\vect w \gets (\alpha,\; s_1,\; \alpha s_1,\; s_2,\; \alpha s_2,\; \dots,\; s_L,\; \alpha s_L)\in\F^{2L+1}$
+\For{each component $w$ of $\vect w$}
+  \State $v_1,\dots,v_{t-1}\xleftarrow{\$}\F$;\quad
+         $v_0 \gets \bigl(w - \sum_{j=1}^{t-1} C_{0j}v_j\bigr)\,C_{00}^{-1}$
+         \Comment{so $\vect c_0\cdot\vect v = w$}
+  \State give holder $i$ the value $\sigma_i(w) = \vect c_i\cdot\vect v$ \quad for $i=1..n$
+\EndFor
+\State wipe $\alpha$, $\vect w$, every $\vect v$ from memory
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[h]
+\caption{\textsc{Combine}$(\text{shares from index set } S,\ |S|\ge t)$}\label{alg:combine}
+\begin{algorithmic}[1]
+\State $I\gets$ first $t$ indices of $S$;\quad $C_I\gets$ rows $I$ of $C$
+\State $\boldsymbol\lambda \gets \vect c_0\, C_I^{-1}$ \Comment{public; depends on indices only}
+\For{each extra index $e\in S\setminus I$} \Comment{redundancy check}
+  \State $\boldsymbol\mu_e \gets \vect c_e\, C_I^{-1}$; \textbf{reject} unless $\sigma_e(w) = \boldsymbol\mu_e\cdot\boldsymbol\sigma_I(w)$ for every $w$
+\EndFor
+\State $\hat w \gets \boldsymbol\lambda\cdot\boldsymbol\sigma_I(w)$ for every component; parse $(\hat\alpha,\hat s_1,\hat\tau_1,\dots)$
+\State $ok \gets [\hat\alpha\neq 0]\ \wedge\ \bigwedge_{l}\bigl([\hat\alpha\hat s_l=\hat\tau_l]\wedge[\hat s_l<2^{56}]\bigr)$ \Comment{constant time}
+\State \Return $K$ if $ok$, else \textbf{reject} (``MAC validation failed'')
+\end{algorithmic}
+\end{algorithm}
+
+\paragraph{Proactive refresh.} To start a new epoch, deal a fresh sharing of $0$
+for every component and add it to every share. Each component's secret is
+unchanged ($\vect c_0\cdot(\vect v+\vect z)=w+0$) and so is the MAC relation. In a
+deployment every holder deals its own zero-sharing and everyone sums, so no party
+ever sees the key. Shares carry a random 128-bit epoch identifier, and shares from
+different epochs refuse to combine.
+
+\section{Security analysis}
+
+\begin{theorem}[Correctness]
+Any $t$ honest shares reconstruct $K$.
+\end{theorem}
+\begin{proof}
+For each component, $\boldsymbol\sigma_I = C_I\vect v$. By Lemma~\ref{lem:cauchy},
+$C_I$ (a $t\times t$ Cauchy matrix) is invertible, so
+$\vect v = C_I^{-1}\boldsymbol\sigma_I$ and
+$w=\vect c_0\vect v=\boldsymbol\lambda\cdot\boldsymbol\sigma_I$.
+Honest values satisfy $\hat\tau_l=\alpha s_l$, so the check passes.
+\end{proof}
+
+\begin{theorem}[Perfect secrecy]\label{thm:privacy}
+For every coalition $J\subseteq\{1..n\}$ with $|J|=t-1$, the joint distribution of
+the shares held by $J$ is uniform on $\F^{(t-1)(2L+1)}$ and independent of
+$(\alpha, K)$. So $t-1$ shares give \emph{zero} information about the key or the
+MAC key, even to an unbounded adversary.
+\end{theorem}
+\begin{proof}
+Fix a component $w$. The vector $\vect v$ is uniform on the affine hyperplane
+$H_w = \{\vect v : \vect c_0\cdot\vect v = w\}$ ($|H_w| = p^{t-1}$), because
+$(v_1,\dots,v_{t-1})$ is uniform and $v_0$ is then determined, as $C_{00}\neq 0$.
+Let $M=\begin{psmallmatrix}\vect c_0\\ C_J\end{psmallmatrix}$, a $t\times t$
+submatrix of $C$, hence invertible by Lemma~\ref{lem:cauchy}. The map
+$\vect v\mapsto M\vect v = (w,\boldsymbol\sigma_J)$ is a bijection from $H_w$ onto
+$\{w\}\times\F^{t-1}$. So $\boldsymbol\sigma_J$ is uniform on $\F^{t-1}$ for
+\emph{every} $w$. Components use independent randomness, so the joint view is
+uniform and independent of all of $\vect w$, and therefore of $(\alpha,K)$.
+\end{proof}
+
+\noindent This is exactly why the secret row $\vect c_0$ is part of the Cauchy matrix:
+privacy reduces to a minor being non-zero. The implementation's
+\texttt{audit} command checks every such minor exhaustively for the parameters
+in use. For example, $t=5,n=12$ gives 792 reconstruction and 495 privacy minors,
+all non-singular.
+
+\begin{theorem}[Validation soundness]\label{thm:mac}
+Let an adversary see the shares of a set $J$ ($|J|\le t-1$) and then replace
+them with arbitrary values. If $I\setminus J\neq\emptyset$ (at least one honest
+share is used), then
+\[
+\Pr\bigl[\textsc{Combine}\text{ outputs }K'\neq K\bigr]\;\le\;\frac{1}{p-1}\;<\;2^{-60}.
+\]
+\end{theorem}
+\begin{proof}
+Reconstruction is linear, so substitution shifts every reconstructed component by
+an offset chosen by the adversary:
+$\hat\alpha=\alpha+\delta_\alpha$, $\hat s_l=s_l+\delta_l$, $\hat\tau_l=\alpha s_l+\varepsilon_l$,
+where $(\delta_\alpha,\delta_l,\varepsilon_l)$ are functions of the adversary's view
+and its own choices. By Theorem~\ref{thm:privacy} that view is independent of
+$\alpha$, which stays uniform on $\F^\times$ conditioned on everything the
+adversary knows, \emph{even if it knows $K$}. Output $K'\neq K$ requires
+$\delta_l\neq 0$ for some $l$ together with
+$(\alpha+\delta_\alpha)(s_l+\delta_l)=\alpha s_l+\varepsilon_l$, i.e.
+\[
+\alpha\,\delta_l \;=\; \varepsilon_l-\delta_\alpha s_l-\delta_\alpha\delta_l .
+\]
+With $\delta_l\neq0$ this pins $\alpha$ to a single value, which happens with
+probability at most $1/(p-1)$.
+\end{proof}
+
+\begin{theorem}[Deterministic detection with redundancy]
+If all $n$ shares are supplied and at most $n-t$ of them are altered, the
+alteration is detected with probability $1$.
+\end{theorem}
+\begin{proof}
+For each component, the honest shares form a codeword of the linear code
+$\{C'\vect v\}$, where $C'$ is the $n \times t$ matrix of share rows. Every
+$t\times t$ minor is non-zero, so the code is MDS with minimum distance $n-t+1$.
+A non-zero error of weight $\le n-t$ cannot turn one codeword into another, so
+some redundant share disagrees with the interpolation from $I$.
+\end{proof}
+
+\begin{theorem}[Mobile adversary, informal]
+After a refresh, the new shares are a fresh uniform sharing of the same $\vect w$,
+independent of the old shares given $\vect w$. An adversary holding $\le t-1$
+shares per epoch learns nothing (Theorem~\ref{thm:privacy} applied per epoch).
+Mixing $t$ shares from different epochs gives a random point, which fails the MAC
+check (Theorem~\ref{thm:mac}).
+\end{theorem}
+
+\section{Side channels and attack surface}\label{sec:sidechannel}
+
+\paragraph{Constant-time arithmetic.} The conditional subtraction in
+\eqref{eq:reduce} is computed as $s = r - p$, $m = -(s\gg 63)$,
+$r' = (s\wedge\neg m)\vee(r\wedge m)$, with no branches. Exponentiation runs a
+fixed schedule of 64 squarings, 64 multiplications and 64 masked selects,
+whatever the base or exponent. MAC tags are compared by OR-accumulating XOR
+differences across \emph{all} limbs before a single accept/reject decision, so
+timing does not reveal \emph{which} limb failed.
+
+\paragraph{Secret-independent control flow.} The only data that steers branches or
+memory indices are the \emph{public} share indices (Gaussian elimination on $C_I$),
+lengths, and the final accept/reject bit. Rejection sampling for random field
+elements depends only on fresh randomness, never on the key.
+
+\paragraph{Evidence.}
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+Primitive (compiled with \texttt{rustc -O}, x86-64) & instructions & conditional branches\\
+\midrule
+\texttt{Fp::mul} & 22 & 0\\
+\texttt{Fp::add}, \texttt{Fp::sub} & 10 & 0\\
+\texttt{Fp::ct\_eq} (MAC compare) & 4 & 0\\
+reduction \eqref{eq:reduce} & 12 & 0\\
+\texttt{Fp::pow} & 46 & 1 (fixed loop counter)\\
+\bottomrule
+\end{tabular}
+\end{center}
+\texttt{scripts/asm\_audit.sh} reproduces this table. The \texttt{ctcheck} command
+runs a dudect-style Welch $t$-test (fixed-zero vs.\ random secret, interleaved,
+inputs pre-generated, top 10\% cropped). On a shared cloud VM we measured
+$|t|$ values of about $0.2$--$4.6$, with the sign changing between runs. That
+pattern is noise, not a consistent leak; the branch-free assembly is the stronger
+guarantee.
+
+\paragraph{Vulnerability windows and how each is closed.}
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{4.2cm}X}
+\toprule
+Window & Mitigation in Kavach-SS\\
+\midrule
+Key at rest on one machine & Split into $n$ shares; $t-1$ of them are information-theoretically useless (Thm.~\ref{thm:privacy}).\\
+Malicious or corrupted holder & IT-MAC catches any change to $K$ w.p.\ $\ge 1-2^{-60}$ (Thm.~\ref{thm:mac}); with redundancy, detection is certain and the bad share is named.\\
+Slow compromise over months & Proactive refresh with epoch IDs makes stolen old shares worthless.\\
+Timing side channel & Branch-free field arithmetic, fixed-schedule \texttt{pow}, all-limb constant-time tag check.\\
+Memory remanence / swap & Every secret buffer (shares, $\vect v$, $\alpha$, limbs, output) is overwritten with \texttt{write\_volatile} plus a compiler fence on drop; output files are created with mode 0600.\\
+Supply chain & Zero third-party crates; randomness from the kernel CSPRNG (\texttt{/dev/urandom}).\\
+Malformed input & Canonical-encoding checks ($<p$), duplicate-index and cross-dealing rejection, limb range checks, zero-padding check.\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section{What is new}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+\item \textbf{Shamir (1979)}: Vandermonde evaluation, with no validation. A single
+lying holder silently changes the key.
+\item \textbf{Feldman/Pedersen VSS}: validation through discrete-log commitments.
+These are only computationally secure, need big-group exponentiation, and are
+broken by quantum computers.
+\item \textbf{Rabin--Ben-Or (1989)}: IT-verifiable, but uses a pairwise tag for every
+holder pair, $O(n^2)$ overhead.
+\item \textbf{Kavach-SS}: an \emph{extended Cauchy} generator, so privacy and
+reconstruction both follow from one determinant identity; a \emph{single} shared
+MAC key, so validation costs only $L+1$ extra field elements per share;
+everything is information-theoretic and post-quantum by construction; and the
+Mersenne field gives cheap, branch-free arithmetic.
+\end{itemize}
+We use well-studied building blocks (Cauchy MDS matrices from coding theory and
+algebraic MACs) and compose them into a new key-protection scheme. No existing
+encryption algorithm touches the plaintext.
+
+\paragraph{Cost.} Dealing: $O(nt(2L+1))$ multiplications. Combining:
+$O(t^3)$ public elimination plus $O(t(2L+1))$ secret multiplications.
+A 256-bit key gives 11 field elements (88 bytes) per share.
+
+\section{Implementation and real-world use}
+Rust, zero dependencies, \texttt{cargo test}: 11 tests, all passing. They cover
+exhaustive subset reconstruction, every-position tamper detection, targeted
+forgery (0/500 successes), cross-dealing rejection, refresh, encoding fuzz, a
+$\chi^2$ uniformity test for $t-1$ shares, and exhaustive minor checks for all
+$n\le 8$. Command-line workflow:
+\begin{verbatim}
+kavach genkey  -o master.key
+kavach split   -t 3 -n 5 -i master.key -o shares/
+kavach combine -o rec.key shares/share-2.kv shares/share-4.kv shares/share-5.kv
+kavach verify  shares/*.kv          # validate without writing the key
+kavach refresh shares/*.kv          # new epoch
+kavach audit   -t 3 -n 5            # check every minor
+kavach ctcheck                      # timing-leak test
+\end{verbatim}
+
+\section{Limitations (stated honestly)}\label{sec:limits}
+The dealer and combiner briefly hold the whole key; this is the scheme's one
+remaining window and it is minimised by zeroisation. Power and EM analysis of
+physical hardware is out of scope. If $\ge t$ holders collude they can, by
+definition, recover the key. The CLI's \texttt{refresh} simulates the
+distributed protocol on one machine.
+
+\end{document}
