@@ -11,6 +11,8 @@ The maths is number theory and linear algebra only: the Mersenne prime field **G
 
 📄 **Full write-up with proofs:** [`paper/kavach.pdf`](paper/kavach.pdf) (LaTeX source: [`paper/kavach.tex`](paper/kavach.tex))
 
+🎬 **Demo video (2 min):** https://youtu.be/ieG0hi2IPUM
+
 ## Build & run
 
 ```bash
